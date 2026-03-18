@@ -1,0 +1,95 @@
+body {
+  margin: 0;
+  font-family: Inter, "Microsoft YaHei", sans-serif;
+  background: #111827;
+  color: #e5e7eb;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.hero,
+.grid {
+  display: grid;
+  gap: 16px;
+}
+
+.hero {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.two-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.card {
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.actions,
+.workflow-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+button {
+  border: 0;
+  border-radius: 10px;
+  background: #2563eb;
+  color: white;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #1d4ed8;
+}
+
+pre,
+.log-panel {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #0f172a;
+  border-radius: 12px;
+  padding: 12px;
+  min-height: 180px;
+}
+
+.table-wrap {
+  overflow: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 10px;
+  border-bottom: 1px solid #374151;
+  text-align: left;
+  vertical-align: top;
+}
+
+.plan-group {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #374151;
+}
+
+@media (max-width: 900px) {
+  .hero,
+  .two-columns {
+    grid-template-columns: 1fr;
+  }
+}
