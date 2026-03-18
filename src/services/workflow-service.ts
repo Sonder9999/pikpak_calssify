@@ -1,12 +1,12 @@
-import { writeFile } from "node:fs/promises";
+﻿import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
-  AppConfig,
   ClassificationArtifacts,
   ClassificationEntry,
   FileEntry,
   FolderSuggestions,
   MovePlan,
+  PromptSettings,
   ScanArtifacts,
   SkippedFileEntry,
 } from "../types";
@@ -16,11 +16,13 @@ import {
   randomBetween,
   readJsonFile,
   sleep,
+  uniqueStrings,
   writeJsonFile,
 } from "../utils";
 import { JobManager } from "./job-manager";
 import { LlmService } from "./llm-service";
 import { PikPakClient } from "./pikpak-client";
+import { SettingsService } from "./settings-service";
 
 function toTsv(columns: string[], rows: string[][]) {
   return `${columns.join(" | ")}\n${"-".repeat(100)}\n${rows.map((row) => row.join(" | ")).join("\n")}\n`;
@@ -42,41 +44,55 @@ export function buildMovePlan(items: ClassificationEntry[]): MovePlan {
 }
 
 export class WorkflowService {
-  private readonly llm: LlmService;
-
   constructor(
-    private readonly config: AppConfig,
+    private readonly settings: SettingsService,
     private readonly jobs: JobManager,
-  ) {
-    this.llm = new LlmService(config);
+  ) {}
+
+  private async outputFile(name: string) {
+    const config = await this.settings.loadRuntimeConfig();
+    return join(process.cwd(), config.workflow.outputDir, name);
   }
 
-  private file(name: string) {
-    return join(process.cwd(), this.config.workflow.outputDir, name);
+  private async getPrompts(): Promise<PromptSettings> {
+    return this.settings.getPrompts();
   }
 
   async getLatestScan() {
-    return readJsonFile<ScanArtifacts>(this.file("scan-result.json"));
+    return readJsonFile<ScanArtifacts>(
+      await this.outputFile("scan-result.json"),
+    );
   }
 
   async getLatestFolders() {
     return readJsonFile<FolderSuggestions>(
-      this.file("folder-suggestions.json"),
+      await this.outputFile("folder-suggestions.json"),
     );
   }
 
   async getLatestClassification() {
     return readJsonFile<ClassificationArtifacts>(
-      this.file("classification-result.json"),
+      await this.outputFile("classification-result.json"),
     );
   }
 
   async getLatestMovePlan() {
-    return readJsonFile<MovePlan>(this.file("move-plan.json"));
+    return readJsonFile<MovePlan>(await this.outputFile("move-plan.json"));
+  }
+
+  async syncExistingTargetFolders() {
+    const config = await this.settings.loadRuntimeConfig();
+    const client = new PikPakClient(config);
+    await client.login();
+    const folders = await client.listFirstLevelFolders(
+      config.pikpak.targetFolder,
+    );
+    return this.settings.mergeCategoryFolders(folders);
   }
 
   async scan(jobId: string) {
-    const client = new PikPakClient(this.config);
+    const config = await this.settings.loadRuntimeConfig();
+    const client = new PikPakClient(config);
     this.jobs.setStatus(jobId, "running");
     this.jobs.log(jobId, "开始登录 PikPak...");
     await client.login();
@@ -87,7 +103,7 @@ export class WorkflowService {
     const skipped: SkippedFileEntry[] = [];
 
     for (const file of allFiles) {
-      if (this.config.workflow.onlyClassifyVideo && !file.isVideo) {
+      if (config.workflow.onlyClassifyVideo && !file.isVideo) {
         skipped.push({
           id: file.id,
           path: file.path,
@@ -101,9 +117,9 @@ export class WorkflowService {
     }
 
     const payload: ScanArtifacts = { files, skipped, createdAt: nowIso() };
-    await writeJsonFile(this.file("scan-result.json"), payload);
+    await writeJsonFile(await this.outputFile("scan-result.json"), payload);
     await writeFile(
-      this.file("file_list.txt"),
+      await this.outputFile("file_list.txt"),
       toTsv(
         ["文件ID", "路径", "文件名", "大小(bytes)", "MIME类型", "时长(秒)"],
         files.map((file) => [
@@ -118,7 +134,7 @@ export class WorkflowService {
       "utf8",
     );
     await writeFile(
-      this.file("skipped_files.txt"),
+      await this.outputFile("skipped_files.txt"),
       toTsv(
         ["文件ID", "路径", "文件名", "MIME类型", "原因"],
         skipped.map((file) => [
@@ -142,46 +158,71 @@ export class WorkflowService {
   }
 
   async suggestFolders(jobId: string) {
-    this.jobs.setStatus(jobId, "running");
+    const config = await this.settings.loadRuntimeConfig();
+    const llm = new LlmService(config);
+    const prompts = await this.getPrompts();
     const scan = await this.getLatestScan();
-    if (!scan) {
-      throw new Error("请先执行扫描");
-    }
+    const library = await this.settings.getCategoryFolders();
 
+    this.jobs.setStatus(jobId, "running");
+    if (!scan) throw new Error("请先执行扫描");
+
+    this.jobs.log(jobId, `开始为 ${scan.files.length} 个文件生成目录建议...`);
     this.jobs.log(
       jobId,
-      `开始为 ${scan.files.length} 个文件生成分类目录建议...`,
+      `目录建议将分 ${Math.max(1, Math.ceil(scan.files.length / config.workflow.batchSize))} 批执行，每批最多 ${config.workflow.batchSize} 个文件`,
     );
-    const folders = await this.llm.suggestFolders(scan.files);
-    const payload: FolderSuggestions = { folders, createdAt: nowIso() };
-    await writeJsonFile(this.file("folder-suggestions.json"), payload);
+    const folders = await llm.suggestFolders(
+      scan.files,
+      library.folders,
+      prompts,
+      ({ completedBatches, totalBatches }) => {
+        this.jobs.log(
+          jobId,
+          `目录建议进度：第 ${completedBatches}/${totalBatches} 批已完成`,
+        );
+      },
+    );
+    const mergedLibrary = await this.settings.saveCategoryFolders(folders);
+
+    const payload: FolderSuggestions = {
+      folders: mergedLibrary.folders,
+      createdAt: nowIso(),
+    };
+    await writeJsonFile(
+      await this.outputFile("folder-suggestions.json"),
+      payload,
+    );
     await writeFile(
-      this.file("folder_names.txt"),
-      `${folders.join("\n")}\n`,
+      await this.outputFile("folder_names.txt"),
+      `${payload.folders.join("\n")}\n`,
       "utf8",
     );
 
-    const result = { folders };
-    this.jobs.log(jobId, `目录建议完成：${folders.join("，")}`);
+    const result = { folders: payload.folders };
+    this.jobs.log(jobId, `目录建议完成：${payload.folders.join("，")}`);
     this.jobs.complete(jobId, result);
     return result;
   }
 
   async classify(jobId: string) {
-    this.jobs.setStatus(jobId, "running");
+    const config = await this.settings.loadRuntimeConfig();
+    const llm = new LlmService(config);
+    const prompts = await this.getPrompts();
     const scan = await this.getLatestScan();
     const folderArtifacts = await this.getLatestFolders();
+    const library = await this.settings.getCategoryFolders();
+
+    this.jobs.setStatus(jobId, "running");
     if (!scan) throw new Error("请先执行扫描");
-    if (!folderArtifacts) throw new Error("请先生成目录建议");
 
     const forcedShortVideos = new Map<string, ClassificationEntry>();
     const llmTargets: FileEntry[] = [];
-
     for (const file of scan.files) {
       if (
-        this.config.workflow.enableShortVideoFilter &&
+        config.workflow.enableShortVideoFilter &&
         file.durationSeconds > 0 &&
-        file.durationSeconds < this.config.workflow.shortVideoThresholdSeconds
+        file.durationSeconds < config.workflow.shortVideoThresholdSeconds
       ) {
         forcedShortVideos.set(file.id, {
           fileId: file.id,
@@ -194,34 +235,57 @@ export class WorkflowService {
       }
     }
 
-    const folders = [...folderArtifacts.folders];
-    if (forcedShortVideos.size > 0 && !folders.includes("短视频")) {
-      folders.push("短视频");
-    }
-    if (!folders.includes("其他")) {
-      folders.push("其他");
-    }
+    const mergedFolders = uniqueStrings([
+      ...library.folders,
+      ...(folderArtifacts?.folders ?? []),
+      ...(forcedShortVideos.size > 0 ? ["短视频"] : []),
+      "其他",
+    ]).sort((left, right) => left.localeCompare(right));
 
     this.jobs.log(
       jobId,
       `开始分类：LLM 处理 ${llmTargets.length} 个，短视频直归 ${forcedShortVideos.size} 个`,
     );
+    if (llmTargets.length > 0) {
+      this.jobs.log(
+        jobId,
+        `分类将分 ${Math.ceil(llmTargets.length / config.workflow.batchSize)} 批执行，每批最多 ${config.workflow.batchSize} 个文件`,
+      );
+    }
     const llmResults =
       llmTargets.length > 0
-        ? await this.llm.classifyFiles(llmTargets, folders)
+        ? await llm.classifyFiles(
+            llmTargets,
+            mergedFolders,
+            prompts,
+            ({
+              completedBatches,
+              totalBatches,
+              completedFiles,
+              totalFiles,
+            }) => {
+              this.jobs.log(
+                jobId,
+                `分类进度：第 ${completedBatches}/${totalBatches} 批已完成，累计 ${completedFiles}/${totalFiles}`,
+              );
+            },
+          )
         : [];
     const items = [...llmResults, ...forcedShortVideos.values()].sort(
       (left, right) => left.path.localeCompare(right.path),
     );
 
     const payload: ClassificationArtifacts = {
-      folders,
+      folders: mergedFolders,
       items,
       createdAt: nowIso(),
     };
-    await writeJsonFile(this.file("classification-result.json"), payload);
+    await writeJsonFile(
+      await this.outputFile("classification-result.json"),
+      payload,
+    );
     await writeFile(
-      this.file("classification.txt"),
+      await this.outputFile("classification.txt"),
       toTsv(
         ["文件ID", "文件路径", "文件名", "分类文件夹"],
         items.map((item) => [item.fileId, item.path, item.name, item.folder]),
@@ -230,7 +294,8 @@ export class WorkflowService {
     );
 
     const plan = buildMovePlan(items);
-    await writeJsonFile(this.file("move-plan.json"), plan);
+    await writeJsonFile(await this.outputFile("move-plan.json"), plan);
+    await this.settings.saveCategoryFolders(mergedFolders);
 
     const result = { fileCount: items.length, folderCount: plan.groups.length };
     this.jobs.log(
@@ -242,14 +307,13 @@ export class WorkflowService {
   }
 
   async move(jobId: string, dryRun: boolean) {
-    this.jobs.setStatus(jobId, "running");
+    const config = await this.settings.loadRuntimeConfig();
     const classification = await this.getLatestClassification();
-    if (!classification) {
-      throw new Error("请先执行分类");
-    }
+    this.jobs.setStatus(jobId, "running");
+    if (!classification) throw new Error("请先执行分类");
 
     const plan = buildMovePlan(classification.items);
-    await writeJsonFile(this.file("move-plan.json"), plan);
+    await writeJsonFile(await this.outputFile("move-plan.json"), plan);
 
     if (dryRun) {
       this.jobs.log(
@@ -260,7 +324,7 @@ export class WorkflowService {
       return plan;
     }
 
-    const client = new PikPakClient(this.config);
+    const client = new PikPakClient(config);
     this.jobs.log(jobId, "开始登录 PikPak，准备执行移动...");
     await client.login();
 
@@ -271,18 +335,13 @@ export class WorkflowService {
         `准备处理分类：${group.folder}（${group.files.length} 个文件）`,
       );
       const pathIds = await client.pathToId(
-        `${this.config.pikpak.targetFolder}/${group.folder}`,
+        `${config.pikpak.targetFolder}/${group.folder}`,
         true,
       );
       const target = pathIds.at(-1);
-      if (!target) {
-        throw new Error(`无法创建目标文件夹：${group.folder}`);
-      }
+      if (!target) throw new Error(`无法创建目标文件夹：${group.folder}`);
 
-      for (const batch of chunk(
-        group.files,
-        this.config.workflow.moveBatchSize,
-      )) {
+      for (const batch of chunk(group.files, config.workflow.moveBatchSize)) {
         await client.batchMove(
           batch.map((item) => item.fileId),
           target.id,
@@ -291,8 +350,8 @@ export class WorkflowService {
         this.jobs.log(jobId, `已移动 ${movedCount}/${plan.totalFiles}`);
         await sleep(
           randomBetween(
-            this.config.workflow.moveMinDelayMs,
-            this.config.workflow.moveMaxDelayMs,
+            config.workflow.moveMinDelayMs,
+            config.workflow.moveMaxDelayMs,
           ),
         );
       }

@@ -74,6 +74,11 @@ export class JobManager {
     job.status = "failed";
     job.error = error;
     job.updatedAt = nowIso();
+    this.emit(id, {
+      type: "status",
+      timestamp: nowIso(),
+      payload: { status: "failed" },
+    });
     this.log(id, `错误：${error}`);
   }
 

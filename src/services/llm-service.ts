@@ -1,44 +1,31 @@
-import type { AppConfig, ClassificationEntry, FileEntry } from "../types";
-import { chunk, extractJsonBlock, uniqueStrings } from "../utils";
+﻿import type {
+  AppConfig,
+  ClassificationEntry,
+  FileEntry,
+  PromptSettings,
+} from "../types";
+import {
+  chunk,
+  extractJsonBlock,
+  renderTemplate,
+  uniqueStrings,
+} from "../utils";
 
-export function buildFolderSuggestionPrompt(files: FileEntry[]) {
-  return [
-    "你是一个中文文件分类助手。",
-    "目标：根据视频文件名称和路径，为这批文件生成适合的分类文件夹名称。",
-    "要求：",
-    '1. 输出 JSON 对象，格式为 {"folders": ["分类1", "分类2"] }。',
-    "2. 文件夹名应简短、可读、适合直接作为目录名称。",
-    "3. 可以包含作品名、角色名、主题名、风格名，但不要输出过度细碎的名字。",
-    "4. 如果无法判断，使用“其他”。",
-    "5. 只输出 JSON，不要输出额外解释。",
-    "文件列表：",
-    ...files.map((file) => `- ${file.path}`),
-  ].join("\n");
-}
-
-export function buildClassificationPrompt(
-  files: FileEntry[],
-  folders: string[],
-) {
-  return [
-    "你是一个中文文件分类助手。",
-    "目标：把每个文件分配到最合适的文件夹。",
-    "要求：",
-    "1. 只能从给定的文件夹候选中选择。",
-    '2. 输出 JSON 对象，格式为 {"items": [{"id": "文件ID", "folder": "分类名"}] }。',
-    "3. 必须覆盖每一个文件。",
-    "4. 如果不确定，归入“其他”。",
-    "5. 只输出 JSON，不要输出解释。",
-    `候选文件夹：${folders.join(", ")}`,
-    "文件列表：",
-    ...files.map((file) => `- ${file.id} | ${file.path}`),
-  ].join("\n");
+function lines(items: string[]) {
+  return items.length > 0
+    ? items.map((item) => `- ${item}`).join("\n")
+    : "- 其他";
 }
 
 export class LlmService {
   constructor(private readonly config: AppConfig) {}
 
-  async suggestFolders(files: FileEntry[]) {
+  async suggestFolders(
+    files: FileEntry[],
+    existingFolders: string[],
+    prompts: PromptSettings,
+    onProgress?: (progress: { completedBatches: number; totalBatches: number }) => void | Promise<void>,
+  ) {
     if (!this.config.llm.apiKey) {
       throw new Error("未配置 LLM_API_KEY，无法生成分类文件夹");
     }
@@ -46,19 +33,36 @@ export class LlmService {
     const batches = chunk(files, this.config.workflow.batchSize);
     const folders: string[] = [];
 
-    for (const batch of batches) {
-      const response = await this.complete(buildFolderSuggestionPrompt(batch));
+    for (const [index, batch] of batches.entries()) {
+      const prompt = renderTemplate(prompts.folderSuggestion, {
+        existingFolders: lines(existingFolders),
+        fileList: lines(batch.map((file) => file.path)),
+      });
+      const response = await this.complete(prompt);
       const json = JSON.parse(extractJsonBlock(response)) as {
         folders?: string[];
       };
       folders.push(...(json.folders || []));
+      await onProgress?.({
+        completedBatches: index + 1,
+        totalBatches: batches.length,
+      });
     }
 
-    const merged = uniqueStrings([...folders, "其他"]);
-    return merged.length > 0 ? merged : ["其他"];
+    return uniqueStrings([...existingFolders, ...folders, "其他"]);
   }
 
-  async classifyFiles(files: FileEntry[], folders: string[]) {
+  async classifyFiles(
+    files: FileEntry[],
+    folders: string[],
+    prompts: PromptSettings,
+    onProgress?: (progress: {
+      completedBatches: number;
+      totalBatches: number;
+      completedFiles: number;
+      totalFiles: number;
+    }) => void | Promise<void>,
+  ) {
     if (!this.config.llm.apiKey) {
       throw new Error("未配置 LLM_API_KEY，无法执行分类");
     }
@@ -67,10 +71,12 @@ export class LlmService {
     const folderSet = new Set(folders);
     const batches = chunk(files, this.config.workflow.batchSize);
 
-    for (const batch of batches) {
-      const response = await this.complete(
-        buildClassificationPrompt(batch, folders),
-      );
+    for (const [index, batch] of batches.entries()) {
+      const prompt = renderTemplate(prompts.classification, {
+        folders: lines(folders),
+        fileList: lines(batch.map((file) => `${file.id} | ${file.path}`)),
+      });
+      const response = await this.complete(prompt);
       const json = JSON.parse(extractJsonBlock(response)) as {
         items?: Array<{ id: string; folder: string }>;
       };
@@ -85,6 +91,12 @@ export class LlmService {
           folder,
         });
       }
+      await onProgress?.({
+        completedBatches: index + 1,
+        totalBatches: batches.length,
+        completedFiles: Math.min((index + 1) * this.config.workflow.batchSize, files.length),
+        totalFiles: files.length,
+      });
     }
 
     if (results.length !== files.length) {
@@ -108,6 +120,7 @@ export class LlmService {
     const url = `${this.config.llm.baseUrl.replace(/\/$/, "")}/chat/completions`;
     const response = await fetch(url, {
       method: "POST",
+      proxy: this.config.network.proxyUrl,
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.config.llm.apiKey}`,

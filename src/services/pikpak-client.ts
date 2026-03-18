@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
+﻿import { createHash } from "node:crypto";
 import type { AppConfig, FileEntry, PikPakFileApiItem } from "../types";
-import { createDeviceId, md5 } from "../utils";
+import { createDeviceId, md5, uniqueStrings } from "../utils";
 
 const CLIENT_ID = "YNxT9w7GMdWvEOKa";
 const CLIENT_SECRET = "dbw2OtmVEeuUvIptb1Coyg";
@@ -34,17 +34,14 @@ function timestamp() {
 
 function captchaSign(deviceId: string, now: string) {
   let sign = `${CLIENT_ID}${CLIENT_VERSION}${PACKAGE_NAME}${deviceId}${now}`;
-  for (const salt of SALTS) {
-    sign = md5(`${sign}${salt}`);
-  }
+  for (const salt of SALTS) sign = md5(`${sign}${salt}`);
   return `1.${sign}`;
 }
 
 function deviceSign(deviceId: string) {
   const signatureBase = `${deviceId}${PACKAGE_NAME}1appkey`;
   const sha1Result = createHash("sha1").update(signatureBase).digest("hex");
-  const md5Result = md5(sha1Result);
-  return `div101.${deviceId}${md5Result}`;
+  return `div101.${deviceId}${md5(sha1Result)}`;
 }
 
 export class PikPakClient {
@@ -104,7 +101,6 @@ export class PikPakClient {
       "X-Device-Id": this.deviceId,
       ...extra,
     };
-
     if (this.captchaToken) headers["X-Captcha-Token"] = this.captchaToken;
     if (this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
     return headers;
@@ -117,24 +113,19 @@ export class PikPakClient {
   ): Promise<T> {
     const response = await fetch(url, {
       ...init,
+      proxy: this.config.network.proxyUrl,
       headers: {
         ...this.headers(),
         ...(init.headers || {}),
       },
     });
-
     const text = await response.text();
     const data = text ? (JSON.parse(text) as Record<string, unknown>) : {};
-
-    if (response.ok && !data.error) {
-      return data as T;
-    }
-
+    if (response.ok && !data.error) return data as T;
     if (data.error_code === 16 && retry) {
       await this.refreshAccessToken();
       return this.request<T>(url, init, false);
     }
-
     throw new Error(
       String(
         data.error_description ||
@@ -148,6 +139,7 @@ export class PikPakClient {
   private async requestForm<T>(url: string, body: URLSearchParams): Promise<T> {
     const response = await fetch(url, {
       method: "POST",
+      proxy: this.config.network.proxyUrl,
       headers: this.headers({
         "Content-Type": "application/x-www-form-urlencoded",
       }),
@@ -175,12 +167,9 @@ export class PikPakClient {
       package_name: PACKAGE_NAME,
       timestamp: now,
     };
-
-    if (this.config.pikpak.username.includes("@")) {
+    if (this.config.pikpak.username.includes("@"))
       meta.email = this.config.pikpak.username;
-    } else {
-      meta.username = this.config.pikpak.username;
-    }
+    else meta.username = this.config.pikpak.username;
 
     const captchaData = await this.request<{ captcha_token: string }>(
       `${USER_HOST}/v1/shield/captcha/init`,
@@ -194,7 +183,6 @@ export class PikPakClient {
         }),
       },
     );
-
     this.captchaToken = captchaData.captcha_token;
 
     const loginData = await this.requestForm<{
@@ -211,7 +199,6 @@ export class PikPakClient {
         captcha_token: this.captchaToken,
       }),
     );
-
     this.accessToken = loginData.access_token;
     this.refreshToken = loginData.refresh_token;
     this.userId = loginData.sub;
@@ -234,7 +221,6 @@ export class PikPakClient {
       },
       false,
     );
-
     this.accessToken = data.access_token;
     this.refreshToken = data.refresh_token;
     this.userId = data.sub;
@@ -297,7 +283,6 @@ export class PikPakClient {
       let found:
         | { id: string; name: string; fileType: "folder" | "file" }
         | undefined;
-
       do {
         const data = await this.listFiles(parentId, pageToken);
         for (const file of data.files || []) {
@@ -310,9 +295,7 @@ export class PikPakClient {
             `/${normalized.slice(0, index).concat(file.name).join("/")}`,
             record,
           );
-          if (file.name === name) {
-            found = record;
-          }
+          if (file.name === name) found = record;
         }
         pageToken = data.next_page_token;
       } while (!found && pageToken);
@@ -321,7 +304,6 @@ export class PikPakClient {
         const created = await this.createFolder(name, parentId);
         found = { id: created.file.id, name, fileType: "folder" };
       }
-
       if (!found) break;
 
       this.pathCache.set(currentPath, found);
@@ -330,6 +312,26 @@ export class PikPakClient {
     }
 
     return pathIds;
+  }
+
+  async listFirstLevelFolders(path: string) {
+    const pathIds = await this.pathToId(path, false);
+    const target = pathIds.at(-1);
+    if (!target) throw new Error(`找不到目标目录：${path}`);
+
+    let pageToken: string | undefined;
+    const folderNames: string[] = [];
+    do {
+      const data = await this.listFiles(target.id, pageToken);
+      for (const file of data.files || []) {
+        if (file.kind?.includes("folder")) folderNames.push(file.name);
+      }
+      pageToken = data.next_page_token;
+    } while (pageToken);
+
+    return uniqueStrings(folderNames).sort((left, right) =>
+      left.localeCompare(right),
+    );
   }
 
   async batchMove(ids: string[], toParentId?: string) {
@@ -348,9 +350,8 @@ export class PikPakClient {
       false,
     );
     const root = sourceIds.at(-1);
-    if (!root) {
+    if (!root)
       throw new Error(`找不到源目录：${this.config.pikpak.sourceFolder}`);
-    }
 
     const results: FileEntry[] = [];
     const walk = async (parentId: string, prefix: string) => {

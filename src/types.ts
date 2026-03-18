@@ -1,7 +1,10 @@
-export type JobStatus = "pending" | "running" | "completed" | "failed";
+﻿export type JobStatus = "pending" | "running" | "completed" | "failed";
 
 export interface AppConfig {
   port: number;
+  network: {
+    proxyUrl?: string;
+  };
   pikpak: {
     username: string;
     password: string;
@@ -29,6 +32,24 @@ export interface AppConfig {
 export interface ConfigValidation {
   valid: boolean;
   errors: string[];
+}
+
+export interface RuntimeSettingsPayload {
+  network: AppConfig["network"];
+  pikpak: AppConfig["pikpak"];
+  llm: AppConfig["llm"];
+  workflow: AppConfig["workflow"];
+}
+
+export interface PromptSettings {
+  folderSuggestion: string;
+  classification: string;
+  updatedAt: string;
+}
+
+export interface CategoryFolderLibrary {
+  folders: string[];
+  updatedAt: string;
 }
 
 export interface FileEntry {

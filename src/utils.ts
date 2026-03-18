@@ -1,4 +1,4 @@
-import { randomUUID, createHash } from "node:crypto";
+﻿import { randomUUID, createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 
 export function sleep(ms: number) {
@@ -45,13 +45,10 @@ export function md5(input: string) {
 export function extractJsonBlock(text: string) {
   const codeBlock = text.match(/```json\s*([\s\S]*?)```/i);
   if (codeBlock) return codeBlock[1].trim();
-
   const firstBrace = text.indexOf("{");
   const firstBracket = text.indexOf("[");
-  if (firstBrace === -1 && firstBracket === -1) {
+  if (firstBrace === -1 && firstBracket === -1)
     throw new Error("未找到 JSON 内容");
-  }
-
   const start =
     firstBrace === -1
       ? firstBracket
@@ -59,6 +56,16 @@ export function extractJsonBlock(text: string) {
         ? firstBrace
         : Math.min(firstBrace, firstBracket);
   return text.slice(start).trim();
+}
+
+export function renderTemplate(
+  template: string,
+  variables: Record<string, string>,
+) {
+  return template.replace(
+    /{{\s*([a-zA-Z0-9_]+)\s*}}/g,
+    (_, key) => variables[key] ?? "",
+  );
 }
 
 export async function writeJsonFile(path: string, data: unknown) {
