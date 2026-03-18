@@ -8,6 +8,7 @@ import {
   chunk,
   extractJsonBlock,
   renderTemplate,
+  throwIfAborted,
   uniqueStrings,
 } from "../utils";
 
@@ -25,6 +26,7 @@ export class LlmService {
     existingFolders: string[],
     prompts: PromptSettings,
     onProgress?: (progress: { completedBatches: number; totalBatches: number }) => void | Promise<void>,
+    signal?: AbortSignal,
   ) {
     if (!this.config.llm.apiKey) {
       throw new Error("未配置 LLM_API_KEY，无法生成分类文件夹");
@@ -34,15 +36,17 @@ export class LlmService {
     const folders: string[] = [];
 
     for (const [index, batch] of batches.entries()) {
+      throwIfAborted(signal);
       const prompt = renderTemplate(prompts.folderSuggestion, {
         existingFolders: lines(existingFolders),
         fileList: lines(batch.map((file) => file.path)),
       });
-      const response = await this.complete(prompt);
+      const response = await this.complete(prompt, signal);
       const json = JSON.parse(extractJsonBlock(response)) as {
         folders?: string[];
       };
       folders.push(...(json.folders || []));
+      throwIfAborted(signal);
       await onProgress?.({
         completedBatches: index + 1,
         totalBatches: batches.length,
@@ -62,6 +66,7 @@ export class LlmService {
       completedFiles: number;
       totalFiles: number;
     }) => void | Promise<void>,
+    signal?: AbortSignal,
   ) {
     if (!this.config.llm.apiKey) {
       throw new Error("未配置 LLM_API_KEY，无法执行分类");
@@ -72,11 +77,12 @@ export class LlmService {
     const batches = chunk(files, this.config.workflow.batchSize);
 
     for (const [index, batch] of batches.entries()) {
+      throwIfAborted(signal);
       const prompt = renderTemplate(prompts.classification, {
         folders: lines(folders),
         fileList: lines(batch.map((file) => `${file.id} | ${file.path}`)),
       });
-      const response = await this.complete(prompt);
+      const response = await this.complete(prompt, signal);
       const json = JSON.parse(extractJsonBlock(response)) as {
         items?: Array<{ id: string; folder: string }>;
       };
@@ -91,6 +97,7 @@ export class LlmService {
           folder,
         });
       }
+      throwIfAborted(signal);
       await onProgress?.({
         completedBatches: index + 1,
         totalBatches: batches.length,
@@ -116,11 +123,12 @@ export class LlmService {
     return results;
   }
 
-  private async complete(prompt: string) {
+  private async complete(prompt: string, signal?: AbortSignal) {
     const url = `${this.config.llm.baseUrl.replace(/\/$/, "")}/chat/completions`;
     const response = await fetch(url, {
       method: "POST",
       proxy: this.config.network.proxyUrl,
+      signal,
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.config.llm.apiKey}`,

@@ -55,7 +55,10 @@ export class PikPakClient {
   >();
   private readonly deviceId: string;
 
-  constructor(private readonly config: AppConfig) {
+  constructor(
+    private readonly config: AppConfig,
+    private readonly signal?: AbortSignal,
+  ) {
     this.deviceId =
       config.pikpak.deviceId ||
       createDeviceId(`${config.pikpak.username}${config.pikpak.password}`);
@@ -114,6 +117,7 @@ export class PikPakClient {
     const response = await fetch(url, {
       ...init,
       proxy: this.config.network.proxyUrl,
+      signal: init.signal ?? this.signal,
       headers: {
         ...this.headers(),
         ...(init.headers || {}),
@@ -140,6 +144,7 @@ export class PikPakClient {
     const response = await fetch(url, {
       method: "POST",
       proxy: this.config.network.proxyUrl,
+      signal: this.signal,
       headers: this.headers({
         "Content-Type": "application/x-www-form-urlencoded",
       }),

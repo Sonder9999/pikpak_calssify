@@ -60,4 +60,32 @@ describe("llm service", () => {
 
     expect(captured[0]).toBe("http://127.0.0.1:7890");
   });
+
+  test("passes abort signal to fetch", async () => {
+    const captured: Array<AbortSignal | null | undefined> = [];
+    globalThis.fetch = mock(
+      async (
+        _url: string | URL | Request,
+        init?: RequestInit & { proxy?: unknown },
+      ) => {
+        captured.push(init?.signal);
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: '{"folders":["分类A"]}' } }] }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      },
+    ) as typeof fetch;
+
+    const signal = new AbortController().signal;
+    const service = new LlmService(config);
+    await service.suggestFolders(
+      [{ id: "1", path: "a.mp4", name: "a.mp4", size: 1, mimeType: "video/mp4", durationSeconds: 0, isVideo: true }],
+      ["其他"],
+      prompts,
+      undefined,
+      signal,
+    );
+
+    expect(captured[0]).toBe(signal);
+  });
 });

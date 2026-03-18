@@ -9,7 +9,7 @@ import {
   validateConfig,
   validateLlmConfig,
 } from "./config";
-import { jsonResponse } from "./utils";
+import { isAbortError, jsonResponse } from "./utils";
 import { JobManager } from "./services/job-manager";
 import { SettingsService } from "./services/settings-service";
 import { WorkflowService } from "./services/workflow-service";
@@ -31,7 +31,21 @@ function createJobRunner(
   queueMicrotask(async () => {
     try {
       await run(job.id);
+      const snapshot = jobs.snapshot(job.id);
+      if (snapshot.status === "cancelling" || jobs.getSignal(job.id).aborted) {
+        jobs.cancelled(job.id);
+      }
     } catch (error) {
+      const snapshot = jobs.snapshot(job.id);
+      if (
+        snapshot.status === "cancelling" ||
+        snapshot.status === "cancelled" ||
+        jobs.getSignal(job.id).aborted ||
+        isAbortError(error)
+      ) {
+        jobs.cancelled(job.id);
+        return;
+      }
       jobs.fail(job.id, error instanceof Error ? error.message : String(error));
     }
   });
@@ -141,6 +155,12 @@ const app = new Elysia()
       202,
     );
   })
+  .post("/api/jobs/:id/cancel", ({ params }) =>
+    jsonResponse({
+      cancelled: true,
+      job: jobs.cancel(params.id),
+    }),
+  )
   .get("/api/jobs/:id", ({ params }) => jsonResponse(jobs.snapshot(params.id)))
   .get("/api/jobs/:id/stream", ({ params, request }) => {
     const encoder = new TextEncoder();

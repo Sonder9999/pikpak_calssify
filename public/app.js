@@ -7,6 +7,7 @@ const progressPanel = document.getElementById("progressPanel");
 const proxyStatusBadge = document.getElementById("proxyStatusBadge");
 const proxyStatusText = document.getElementById("proxyStatusText");
 const proxyStatusMeta = document.getElementById("proxyStatusMeta");
+const stopCurrentJobButton = document.getElementById("stopCurrentJob");
 const runtimeForm = document.getElementById("runtimeForm");
 const folderPrompt = document.getElementById("folderPrompt");
 const classificationPrompt = document.getElementById("classificationPrompt");
@@ -14,6 +15,20 @@ const categoryFolders = document.getElementById("categoryFolders");
 
 let currentEventSource = null;
 let currentJobState = null;
+
+function isTerminalStatus(status) {
+  return ["completed", "failed", "cancelled"].includes(status);
+}
+
+function syncStopButton() {
+  const canStop =
+    currentJobState &&
+    currentJobState.id &&
+    ["pending", "running", "cancelling"].includes(currentJobState.status);
+  stopCurrentJobButton.disabled = !canStop || currentJobState.status === "cancelling";
+  stopCurrentJobButton.textContent =
+    currentJobState?.status === "cancelling" ? "正在停止..." : "停止当前任务";
+}
 
 async function getJson(url, options) {
   const response = await fetch(url, options);
@@ -221,6 +236,7 @@ function updateJobView(job) {
     logs: [...(job.logs || [])],
     error: job.error,
   };
+  syncStopButton();
   jobStatus.textContent = `任务状态：${job.status}`;
   logPanel.textContent = (job.logs || []).join("\n");
   renderProgress(deriveJobProgress(job));
@@ -310,6 +326,7 @@ function attachStream(jobId) {
     status: "pending",
     logs: [],
   };
+  syncStopButton();
   logPanel.textContent = "";
   jobStatus.textContent = `任务已创建：${jobId}`;
   renderProgress({
@@ -334,6 +351,7 @@ function attachStream(jobId) {
         ...(currentJobState || { id: jobId, type: "unknown", logs: [] }),
         status: message.payload.status,
       };
+      syncStopButton();
       jobStatus.textContent = `任务状态：${message.payload.status}`;
       renderProgress(deriveJobProgress(currentJobState));
     }
@@ -349,6 +367,10 @@ function attachStream(jobId) {
     }
 
     if (message.type === "result") {
+      if (currentJobState) {
+        currentJobState.status = "completed";
+        syncStopButton();
+      }
       jobStatus.textContent += "（已完成）";
       await refreshPlan();
       await loadCategories();
@@ -368,6 +390,8 @@ function attachStream(jobId) {
         await refreshConfigSummary();
       } else if (job.status === "failed") {
         jobStatus.textContent += "（执行失败）";
+      } else if (job.status === "cancelled") {
+        jobStatus.textContent += "（已停止）";
       } else {
         jobStatus.textContent += "（日志流结束）";
       }
@@ -497,6 +521,17 @@ document.getElementById("refreshConfig").addEventListener("click", async () => {
 });
 
 document.getElementById("refreshPlan").addEventListener("click", refreshPlan);
+stopCurrentJobButton.addEventListener("click", async () => {
+  if (!currentJobState?.id || isTerminalStatus(currentJobState.status)) return;
+  await getJson(`/api/jobs/${currentJobState.id}/cancel`, {
+    method: "POST",
+  });
+  currentJobState = {
+    ...currentJobState,
+    status: "cancelling",
+  };
+  syncStopButton();
+});
 document.querySelectorAll("[data-action]").forEach((button) => {
   button.addEventListener("click", () => runWorkflow(button.dataset.action));
 });

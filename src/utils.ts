@@ -1,8 +1,64 @@
 ﻿import { randomUUID, createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 
-export function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+export function createAbortError(message = "任务已取消") {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+export function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+export function throwIfAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw createAbortError(
+    typeof signal.reason === "string" ? signal.reason : "任务已取消",
+  );
+}
+
+export function sleep(ms: number, signal?: AbortSignal) {
+  if (!signal) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(
+        signal.reason instanceof Error
+          ? signal.reason
+          : createAbortError(
+              typeof signal.reason === "string"
+                ? signal.reason
+                : "任务已取消",
+            ),
+      );
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(undefined);
+    }, ms);
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      reject(
+        signal.reason instanceof Error
+          ? signal.reason
+          : createAbortError(
+              typeof signal.reason === "string"
+                ? signal.reason
+                : "任务已取消",
+            ),
+      );
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export function randomBetween(min: number, max: number) {

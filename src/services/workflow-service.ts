@@ -16,6 +16,7 @@ import {
   randomBetween,
   readJsonFile,
   sleep,
+  throwIfAborted,
   uniqueStrings,
   writeJsonFile,
 } from "../utils";
@@ -92,7 +93,9 @@ export class WorkflowService {
 
   async scan(jobId: string) {
     const config = await this.settings.loadRuntimeConfig();
-    const client = new PikPakClient(config);
+    const signal = this.jobs.getSignal(jobId);
+    const client = new PikPakClient(config, signal);
+    throwIfAborted(signal);
     this.jobs.setStatus(jobId, "running");
     this.jobs.log(jobId, "开始登录 PikPak...");
     await client.login();
@@ -103,6 +106,7 @@ export class WorkflowService {
     const skipped: SkippedFileEntry[] = [];
 
     for (const file of allFiles) {
+      throwIfAborted(signal);
       if (config.workflow.onlyClassifyVideo && !file.isVideo) {
         skipped.push({
           id: file.id,
@@ -159,13 +163,15 @@ export class WorkflowService {
 
   async suggestFolders(jobId: string) {
     const config = await this.settings.loadRuntimeConfig();
+    const signal = this.jobs.getSignal(jobId);
     const llm = new LlmService(config);
     const prompts = await this.getPrompts();
     const scan = await this.getLatestScan();
     const library = await this.settings.getCategoryFolders();
 
-    this.jobs.setStatus(jobId, "running");
     if (!scan) throw new Error("请先执行扫描");
+    throwIfAborted(signal);
+    this.jobs.setStatus(jobId, "running");
 
     this.jobs.log(jobId, `开始为 ${scan.files.length} 个文件生成目录建议...`);
     this.jobs.log(
@@ -182,6 +188,7 @@ export class WorkflowService {
           `目录建议进度：第 ${completedBatches}/${totalBatches} 批已完成`,
         );
       },
+      signal,
     );
     const mergedLibrary = await this.settings.saveCategoryFolders(folders);
 
@@ -207,14 +214,16 @@ export class WorkflowService {
 
   async classify(jobId: string) {
     const config = await this.settings.loadRuntimeConfig();
+    const signal = this.jobs.getSignal(jobId);
     const llm = new LlmService(config);
     const prompts = await this.getPrompts();
     const scan = await this.getLatestScan();
     const folderArtifacts = await this.getLatestFolders();
     const library = await this.settings.getCategoryFolders();
 
-    this.jobs.setStatus(jobId, "running");
     if (!scan) throw new Error("请先执行扫描");
+    throwIfAborted(signal);
+    this.jobs.setStatus(jobId, "running");
 
     const forcedShortVideos = new Map<string, ClassificationEntry>();
     const llmTargets: FileEntry[] = [];
@@ -269,6 +278,7 @@ export class WorkflowService {
                 `分类进度：第 ${completedBatches}/${totalBatches} 批已完成，累计 ${completedFiles}/${totalFiles}`,
               );
             },
+            signal,
           )
         : [];
     const items = [...llmResults, ...forcedShortVideos.values()].sort(
@@ -308,12 +318,15 @@ export class WorkflowService {
 
   async move(jobId: string, dryRun: boolean) {
     const config = await this.settings.loadRuntimeConfig();
+    const signal = this.jobs.getSignal(jobId);
     const classification = await this.getLatestClassification();
-    this.jobs.setStatus(jobId, "running");
     if (!classification) throw new Error("请先执行分类");
+    throwIfAborted(signal);
+    this.jobs.setStatus(jobId, "running");
 
     const plan = buildMovePlan(classification.items);
     await writeJsonFile(await this.outputFile("move-plan.json"), plan);
+    throwIfAborted(signal);
 
     if (dryRun) {
       this.jobs.log(
@@ -324,12 +337,13 @@ export class WorkflowService {
       return plan;
     }
 
-    const client = new PikPakClient(config);
+    const client = new PikPakClient(config, signal);
     this.jobs.log(jobId, "开始登录 PikPak，准备执行移动...");
     await client.login();
 
     let movedCount = 0;
     for (const group of plan.groups) {
+      throwIfAborted(signal);
       this.jobs.log(
         jobId,
         `准备处理分类：${group.folder}（${group.files.length} 个文件）`,
@@ -342,6 +356,7 @@ export class WorkflowService {
       if (!target) throw new Error(`无法创建目标文件夹：${group.folder}`);
 
       for (const batch of chunk(group.files, config.workflow.moveBatchSize)) {
+        throwIfAborted(signal);
         await client.batchMove(
           batch.map((item) => item.fileId),
           target.id,
@@ -353,6 +368,7 @@ export class WorkflowService {
             config.workflow.moveMinDelayMs,
             config.workflow.moveMaxDelayMs,
           ),
+          signal,
         );
       }
     }

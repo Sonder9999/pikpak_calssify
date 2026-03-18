@@ -63,4 +63,21 @@ describe("config", () => {
     expect(masked.network.label).toBe("已启用");
     expect(masked.network.proxyUrl).toBe("http://127.0.0.1:7890");
   });
+
+  test("treats device id as optional", () => {
+    const config = loadConfigFromEnvMap({
+      PIKPAK_USERNAME: "user@example.com",
+      PIKPAK_PASSWORD: "secret",
+      PIKPAK_SOURCE_FOLDER: "Media",
+      PIKPAK_TARGET_FOLDER: "Archive",
+      LLM_API_KEY: "demo-key",
+      LLM_BASE_URL: "https://example.com/v1",
+      LLM_MODEL: "demo-model",
+      PIKPAK_DEVICE_ID: "",
+    });
+
+    expect(config.pikpak.deviceId).toBeUndefined();
+    expect(validateConfig(config).valid).toBe(true);
+    expect(getMaskedConfigSummary(config).pikpak.deviceId).toBe("自动生成");
+  });
 });

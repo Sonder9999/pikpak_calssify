@@ -31,4 +31,29 @@ describe("job manager", () => {
     expect(statuses).toContain("failed");
     expect(manager.snapshot(job.id).status).toBe("failed");
   });
+
+  test("marks job as cancelling and cancelled", () => {
+    const manager = new JobManager();
+    const job = manager.createJob("classify");
+    const statuses: string[] = [];
+
+    manager.subscribe(job.id, (event) => {
+      if (event.type === "status") {
+        statuses.push((event.payload as { status: string }).status);
+      }
+    });
+
+    manager.setStatus(job.id, "running");
+    const signal = manager.getSignal(job.id);
+    manager.cancel(job.id);
+
+    expect(signal.aborted).toBe(true);
+    expect(manager.snapshot(job.id).status).toBe("cancelling");
+
+    manager.cancelled(job.id);
+
+    expect(statuses).toContain("cancelling");
+    expect(statuses).toContain("cancelled");
+    expect(manager.snapshot(job.id).status).toBe("cancelled");
+  });
 });
