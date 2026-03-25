@@ -1,0 +1,182 @@
+﻿@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --bg: #f4f7fb;
+  --bg-soft: rgba(255, 255, 255, 0.7);
+  --surface: rgba(255, 255, 255, 0.8);
+  --surface-strong: rgba(255, 255, 255, 0.92);
+  --surface-muted: rgba(245, 248, 252, 0.72);
+  --border: rgba(148, 163, 184, 0.24);
+  --border-strong: rgba(148, 163, 184, 0.35);
+  --text: #0f172a;
+  --text-soft: #475569;
+  --text-muted: #64748b;
+  --accent-from: #38bdf8;
+  --accent-via: #6366f1;
+  --accent-to: #8b5cf6;
+  --shadow: 0 24px 64px rgba(15, 23, 42, 0.08);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #08111f;
+  --bg-soft: rgba(8, 17, 31, 0.7);
+  --surface: rgba(9, 17, 32, 0.7);
+  --surface-strong: rgba(10, 18, 34, 0.84);
+  --surface-muted: rgba(8, 14, 26, 0.55);
+  --border: rgba(148, 163, 184, 0.14);
+  --border-strong: rgba(148, 163, 184, 0.2);
+  --text: #e2e8f0;
+  --text-soft: #cbd5e1;
+  --text-muted: #94a3b8;
+  --shadow: 0 24px 64px rgba(2, 6, 23, 0.35);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: Inter, "Microsoft YaHei", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(
+      circle at top left,
+      rgba(56, 189, 248, 0.18),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at top right,
+      rgba(99, 102, 241, 0.16),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at bottom,
+      rgba(139, 92, 246, 0.12),
+      transparent 26%
+    ),
+    linear-gradient(
+      180deg,
+      var(--bg),
+      color-mix(in srgb, var(--bg) 80%, #000 20%)
+    );
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.6), transparent 85%);
+  opacity: 0.2;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface) 88%, white 12%),
+      var(--surface)
+    );
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(20px);
+  }
+
+  .glass-panel-strong {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-strong) 90%, white 10%),
+      var(--surface-strong)
+    );
+    border: 1px solid var(--border-strong);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(22px);
+  }
+
+  .surface-chip {
+    background: color-mix(in srgb, var(--surface-muted) 82%, transparent 18%);
+    border: 1px solid var(--border);
+  }
+
+  .field-input {
+    width: 100%;
+    border-radius: 1rem;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface-muted) 88%, transparent 12%);
+    color: var(--text);
+    padding: 0.9rem 1rem;
+    outline: none;
+    transition:
+      border-color 140ms ease,
+      transform 140ms ease;
+  }
+
+  .field-input:focus {
+    border-color: rgba(99, 102, 241, 0.55);
+    transform: translateY(-1px);
+  }
+
+  .primary-button {
+    background-image: linear-gradient(
+      135deg,
+      var(--accent-from),
+      var(--accent-via) 55%,
+      var(--accent-to)
+    );
+    color: white;
+    box-shadow: 0 16px 28px rgba(99, 102, 241, 0.24);
+  }
+
+  .secondary-button {
+    background: color-mix(in srgb, var(--surface-muted) 85%, transparent 15%);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .button-base {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 999px;
+    padding: 0.85rem 1.1rem;
+    font-weight: 600;
+    transition:
+      transform 140ms ease,
+      opacity 140ms ease,
+      box-shadow 140ms ease;
+  }
+
+  .button-base:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+
+  .button-base:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+}

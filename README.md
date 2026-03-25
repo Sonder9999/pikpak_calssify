@@ -1,28 +1,30 @@
-# PikPak Classify Web
+﻿# PikPak Classify Web
 
 [中文说明](./README.zh-CN.md)
 
-PikPak Classify Web is a `Bun + ElysiaJS` application for scanning PikPak files, generating folder suggestions with an LLM, classifying files, previewing move plans, and executing batch moves from a Chinese dashboard.
+PikPak Classify Web is a `Bun + ElysiaJS` application for scanning PikPak files, generating folder suggestions with an LLM, classifying files, previewing move plans, and executing batch moves from a modern browser dashboard.
 
 ## Features
 
-- Chinese web dashboard with Bun + ElysiaJS backend
-- `.env`-based runtime configuration with editable settings in the UI
+- Single-page step-flow dashboard for `Scan → Folder Suggestions → Classify → Dry Run → Move`
+- Modern React + Vite + Tailwind UI with glass-style surfaces
+- Light and dark theme toggle with local preference persistence
+- `.env`-based runtime configuration with in-browser editing
 - Proxy-aware outbound requests for both LLM and PikPak APIs
 - Real-time job logs via SSE with heartbeat protection
-- Folder suggestion, classification, dry-run, and real move workflow
-- Manual sync for existing target folders in `PIKPAK_TARGET_FOLDER`
 - Prompt editing and category library editing from the browser
 - Stop-current-job control for long-running classify or move tasks
 - Bun test suite tracked in `tests/`
 
 ## Project Structure
 
-- `src/` - server, config, services, workflow logic
-- `public/` - dashboard HTML, CSS, and browser script
+- `src/` - Elysia server, config, services, workflow logic
+- `ui/` - React + Vite + Tailwind source for the dashboard
+- `public/` - generated frontend build output served by Elysia
 - `tests/` - Bun-based regression and behavior tests
 - `data/` - local prompt and category data files generated at runtime
 - `output/` - generated scan, classification, and move artifacts
+- `openspec/` - change proposals, specs, and implementation tasks
 
 ## Setup
 
@@ -31,11 +33,13 @@ PikPak Classify Web is a `Bun + ElysiaJS` application for scanning PikPak files,
    ```bash
    bun install
    ```
+
 2. Copy the environment template:
 
    ```bash
    cp .env.example .env
    ```
+
 3. Fill in your credentials and paths in `.env`.
 
 ## Important Environment Variables
@@ -60,38 +64,43 @@ bun run dev
 
 Then open `http://localhost:3000`.
 
+## Frontend Workflow
+
+For the new frontend source and generated assets:
+
+```bash
+bun run build:ui
+```
+
+The generated dashboard is written into `public/` and is served by the Elysia app.
+
 ## Workflow
 
 1. Scan files from the configured PikPak source folder
 2. Generate folder suggestions with the configured LLM
 3. Run classification for the scanned file set
-4. Review the move plan and category distribution
-5. Run dry-run or confirm the real move
+4. Review the move plan and category distribution with Dry Run
+5. Confirm the real move when the preview looks correct
 6. Stop the current job if you need to interrupt a long task
-
-## Web UI Highlights
-
-- Shows current proxy status and proxy URL
-- Streams live job logs and keeps SSE alive with heartbeat events
-- Displays batch progress for folder suggestion and classification
-- Lets you edit runtime config, prompts, and category folders
-- Supports manual sync of existing target subfolders
-- Provides a `Stop Current Job` button for running tasks
 
 ## Commands
 
-- `bun run dev` - start in watch mode
-- `bun run start` - start once
+- `bun run dev` - start the server in watch mode
+- `bun run dev:ui` - run the Vite frontend dev server
+- `bun run start` - start the server once
+- `bun run build` - build the frontend into `public/`
+- `bun run build:ui` - build the frontend into `public/`
 - `bun run test` - run all tests
-- `bun run fmt` - format source and test files
+- `bun run fmt` - format source, frontend, and test files
 - `bun run check` - run the verification suite
 
 ## Testing
 
-The repository now tracks the `tests/` directory. Current tests cover:
+Current tests cover:
 
 - config parsing and masked summaries
 - proxy propagation into LLM requests
 - job lifecycle events, including cancel flow
 - settings persistence
 - move-plan grouping logic
+- dashboard view-model behavior for step states and theme preference

@@ -18,3 +18,4 @@ requirements.txt
 tmp_server*.log
 tmp_server*.err.log
 data/
+.superpowers/

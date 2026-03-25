@@ -117,6 +117,9 @@ const app = new Elysia()
       (await workflow.getLatestScan()) ?? { files: [], skipped: [] },
     ),
   )
+  .get("/api/workflow/folders", async () =>
+    jsonResponse((await workflow.getLatestFolders()) ?? { folders: [] }),
+  )
   .get("/api/workflow/classification", async () =>
     jsonResponse((await workflow.getLatestClassification()) ?? { items: [] }),
   )
@@ -173,7 +176,10 @@ const app = new Elysia()
         send({ type: "snapshot", payload: jobs.snapshot(params.id) });
         const unsubscribe = jobs.subscribe(params.id, (event) => send(event));
         const heartbeat = setInterval(() => {
-          send({ type: "heartbeat", payload: { at: new Date().toISOString() } });
+          send({
+            type: "heartbeat",
+            payload: { at: new Date().toISOString() },
+          });
         }, 10000);
         request.signal.addEventListener("abort", () => {
           clearInterval(heartbeat);

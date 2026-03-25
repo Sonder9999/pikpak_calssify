@@ -5,17 +5,28 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
+    "dev:ui": "vite --config ui/vite.config.ts",
     "start": "bun src/index.ts",
+    "build": "bun run build:ui",
+    "build:ui": "vite build --config ui/vite.config.ts",
     "test": "bun test",
-    "fmt": "prettier --write \"src/**/*.{ts,js}\" \"tests/**/*.ts\" public/app.js package.json tsconfig.json README.md README.zh-CN.md",
+    "fmt": "prettier --write \"src/**/*.{ts,js}\" \"tests/**/*.ts\" \"ui/**/*.{ts,tsx,css,html}\" package.json tsconfig.json README.md README.zh-CN.md",
     "check": "bun test"
   },
   "dependencies": {
     "@elysiajs/cors": "^1.4.1",
     "@elysiajs/static": "^1.4.7",
-    "elysia": "^1.4.28"
+    "elysia": "^1.4.28",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
-    "prettier": "^3.8.1"
+    "@tailwindcss/vite": "^4.1.17",
+    "@types/react": "^19.2.1",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "prettier": "^3.8.1",
+    "tailwindcss": "^4.1.17",
+    "vite": "^7.2.2"
   }
 }
