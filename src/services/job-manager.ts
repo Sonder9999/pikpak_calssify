@@ -1,5 +1,11 @@
 import { createAbortError, nowIso } from "../utils";
-import type { JobEvent, JobRecord, JobStatus } from "../types";
+import type {
+  JobEvent,
+  JobLogEntry,
+  JobLogLevel,
+  JobRecord,
+  JobStatus,
+} from "../types";
 
 type Listener = (event: JobEvent) => void;
 
@@ -12,13 +18,15 @@ export class JobManager {
 
   createJob(type: string) {
     const id = crypto.randomUUID();
+    const timestamp = nowIso();
     const job: JobRecord = {
       id,
       type,
       status: "pending",
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
       logs: [],
+      logEntries: [],
     };
     this.jobs.set(id, job);
     this.controllers.set(id, new AbortController());
@@ -27,6 +35,12 @@ export class JobManager {
 
   getJob(id: string) {
     return this.jobs.get(id) ?? null;
+  }
+
+  listJobs() {
+    return [...this.jobs.values()].sort((left, right) =>
+      right.createdAt.localeCompare(left.createdAt),
+    );
   }
 
   getSignal(id: string) {
@@ -51,34 +65,70 @@ export class JobManager {
     }
   }
 
-  setStatus(id: string, status: JobStatus) {
+  private appendLogEntry(
+    id: string,
+    message: string,
+    level: JobLogLevel,
+    context?: Record<string, string | number | boolean | null>,
+  ) {
     const job = this.getJobOrThrow(id);
-    job.status = status;
-    job.updatedAt = nowIso();
-    this.emit(id, { type: "status", timestamp: nowIso(), payload: { status } });
+    const timestamp = nowIso();
+    const entry: JobLogEntry = {
+      level,
+      step: job.type,
+      message,
+      timestamp,
+      context,
+    };
+    job.logs.push(message);
+    job.logEntries = [...(job.logEntries ?? []), entry];
+    job.updatedAt = timestamp;
+    this.emit(id, {
+      type: "log",
+      timestamp,
+      payload: { message, entry },
+    });
   }
 
-  log(id: string, message: string) {
+  setStatus(id: string, status: JobStatus) {
     const job = this.getJobOrThrow(id);
-    job.logs.push(message);
-    job.updatedAt = nowIso();
-    this.emit(id, { type: "log", timestamp: nowIso(), payload: { message } });
+    const timestamp = nowIso();
+    job.status = status;
+    job.updatedAt = timestamp;
+    this.emit(id, { type: "status", timestamp, payload: { status } });
+  }
+
+  log(
+    id: string,
+    message: string,
+    options?: {
+      level?: JobLogLevel;
+      context?: Record<string, string | number | boolean | null>;
+    },
+  ) {
+    this.appendLogEntry(
+      id,
+      message,
+      options?.level ?? "info",
+      options?.context,
+    );
   }
 
   complete(id: string, result?: unknown) {
     const job = this.getJobOrThrow(id);
     if (job.status === "cancelled") return;
+    const timestamp = nowIso();
     job.status = "completed";
     job.result = result;
-    job.updatedAt = nowIso();
+    job.updatedAt = timestamp;
     this.emit(id, {
       type: "status",
-      timestamp: nowIso(),
+      timestamp,
       payload: { status: "completed" },
     });
     this.emit(id, {
       type: "result",
-      timestamp: nowIso(),
+      timestamp,
       payload: result ?? null,
     });
   }
@@ -86,15 +136,16 @@ export class JobManager {
   fail(id: string, error: string) {
     const job = this.getJobOrThrow(id);
     if (job.status === "cancelled") return;
+    const timestamp = nowIso();
     job.status = "failed";
     job.error = error;
-    job.updatedAt = nowIso();
+    job.updatedAt = timestamp;
     this.emit(id, {
       type: "status",
-      timestamp: nowIso(),
+      timestamp,
       payload: { status: "failed" },
     });
-    this.log(id, `错误：${error}`);
+    this.appendLogEntry(id, `Error: ${error}`, "error");
   }
 
   cancel(id: string) {
@@ -103,14 +154,19 @@ export class JobManager {
       return job;
     }
 
+    const timestamp = nowIso();
     job.status = "cancelling";
-    job.updatedAt = nowIso();
+    job.updatedAt = timestamp;
     this.emit(id, {
       type: "status",
-      timestamp: nowIso(),
+      timestamp,
       payload: { status: "cancelling" },
     });
-    this.log(id, "收到停止请求，正在尝试中止任务...");
+    this.appendLogEntry(
+      id,
+      "Cancellation requested. Stopping the job...",
+      "warn",
+    );
 
     const controller = this.getControllerOrThrow(id);
     if (!controller.signal.aborted) {
@@ -119,18 +175,19 @@ export class JobManager {
     return job;
   }
 
-  cancelled(id: string, message = "任务已停止") {
+  cancelled(id: string, message = "Job cancelled") {
     const job = this.getJobOrThrow(id);
     if (job.status === "cancelled") return job;
+    const timestamp = nowIso();
     job.status = "cancelled";
     job.error = message;
-    job.updatedAt = nowIso();
+    job.updatedAt = timestamp;
     this.emit(id, {
       type: "status",
-      timestamp: nowIso(),
+      timestamp,
       payload: { status: "cancelled" },
     });
-    this.log(id, message);
+    this.appendLogEntry(id, message, "warn");
     return job;
   }
 
@@ -141,7 +198,7 @@ export class JobManager {
   private getJobOrThrow(id: string) {
     const job = this.jobs.get(id);
     if (!job) {
-      throw new Error(`任务不存在：${id}`);
+      throw new Error(`Job not found: ${id}`);
     }
     return job;
   }
@@ -149,7 +206,7 @@ export class JobManager {
   private getControllerOrThrow(id: string) {
     const controller = this.controllers.get(id);
     if (!controller) {
-      throw new Error(`任务控制器不存在：${id}`);
+      throw new Error(`Abort controller not found: ${id}`);
     }
     return controller;
   }

@@ -76,15 +76,31 @@ export interface SkippedFileEntry {
   reason: string;
 }
 
+export type WorkflowStepId =
+  | "scan"
+  | "folders"
+  | "classify"
+  | "dry-run"
+  | "move";
+
+export interface ArtifactMeta {
+  signature?: string;
+  sourceScanCreatedAt?: string;
+  sourceFoldersCreatedAt?: string;
+  sourceClassificationCreatedAt?: string;
+}
+
 export interface ScanArtifacts {
   files: FileEntry[];
   skipped: SkippedFileEntry[];
   createdAt: string;
+  meta?: ArtifactMeta;
 }
 
 export interface FolderSuggestions {
   folders: string[];
   createdAt: string;
+  meta?: ArtifactMeta;
 }
 
 export interface ClassificationEntry {
@@ -98,6 +114,7 @@ export interface ClassificationArtifacts {
   folders: string[];
   items: ClassificationEntry[];
   createdAt: string;
+  meta?: ArtifactMeta;
 }
 
 export interface MovePlanGroup {
@@ -109,12 +126,44 @@ export interface MovePlan {
   groups: MovePlanGroup[];
   totalFiles: number;
   createdAt: string;
+  meta?: ArtifactMeta;
+}
+
+export interface WorkflowStepCurrentSignatures {
+  scan: string;
+  folders: string;
+  classify: string;
+  move: string;
+}
+
+export interface WorkflowStepSummary {
+  id: WorkflowStepId;
+  hasArtifact: boolean;
+  artifactUpdatedAt?: string;
+  stale: boolean;
+  staleReason?: string;
+  canRun: boolean;
+}
+
+export interface WorkflowSummaryResponse {
+  steps: Record<WorkflowStepId, WorkflowStepSummary>;
+  jobs: JobRecord[];
 }
 
 export interface JobEvent {
   type: "status" | "log" | "result";
   timestamp: string;
   payload: unknown;
+}
+
+export type JobLogLevel = "info" | "warn" | "error";
+
+export interface JobLogEntry {
+  level: JobLogLevel;
+  step: string;
+  message: string;
+  timestamp: string;
+  context?: Record<string, string | number | boolean | null>;
 }
 
 export interface JobRecord {
@@ -124,6 +173,7 @@ export interface JobRecord {
   createdAt: string;
   updatedAt: string;
   logs: string[];
+  logEntries?: JobLogEntry[];
   result?: unknown;
   error?: string;
 }

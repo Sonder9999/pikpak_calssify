@@ -20,7 +20,7 @@ PikPak Classify Web is a `Bun + ElysiaJS` application for scanning PikPak files,
 
 - `src/` - Elysia server, config, services, workflow logic
 - `ui/` - React + Vite + Tailwind source for the dashboard
-- `public/` - generated frontend build output served by Elysia
+- `public/` - generated frontend build output for production; not tracked in git
 - `tests/` - Bun-based regression and behavior tests
 - `data/` - local prompt and category data files generated at runtime
 - `output/` - generated scan, classification, and move artifacts
@@ -62,7 +62,11 @@ PikPak Classify Web is a `Bun + ElysiaJS` application for scanning PikPak files,
 bun run dev
 ```
 
-Then open `http://localhost:3000`.
+This starts both the Bun API server and the Vite frontend dev server.
+
+Open `http://127.0.0.1:4173` for the UI.
+
+The backend API stays on `http://127.0.0.1:3000`.
 
 ## Frontend Workflow
 
@@ -73,6 +77,7 @@ bun run build:ui
 ```
 
 The generated dashboard is written into `public/` and is served by the Elysia app.
+The generated files in `public/` are build artifacts and are not tracked in git.
 
 ## Workflow
 
@@ -85,7 +90,8 @@ The generated dashboard is written into `public/` and is served by the Elysia ap
 
 ## Commands
 
-- `bun run dev` - start the server in watch mode
+- `bun run dev` - start the Bun API server and Vite frontend together
+- `bun run dev:server` - start only the Bun API server in watch mode
 - `bun run dev:ui` - run the Vite frontend dev server
 - `bun run start` - start the server once
 - `bun run build` - build the frontend into `public/`

@@ -8,6 +8,7 @@
   PromptSettings,
   RuntimeSettingsPayload,
   ScanArtifacts,
+  WorkflowSummaryResponse,
 } from "../../../src/types";
 
 export type WorkflowAction =
@@ -45,6 +46,12 @@ export interface WorkflowConfigSummary {
   llmValidation?: ConfigValidation;
 }
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
+export function buildApiPath(path: string) {
+  return API_BASE ? `${API_BASE}${path}` : path;
+}
+
 async function getJson<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init);
   if (!response.ok) {
@@ -54,20 +61,20 @@ async function getJson<T>(input: string, init?: RequestInit): Promise<T> {
 }
 
 export function fetchHealth() {
-  return getJson<HealthResponse>("/api/health");
+  return getJson<HealthResponse>(buildApiPath("/api/health"));
 }
 
 export function fetchConfigSummary() {
-  return getJson<WorkflowConfigSummary>("/api/config");
+  return getJson<WorkflowConfigSummary>(buildApiPath("/api/config"));
 }
 
 export function fetchRuntimeSettings() {
-  return getJson<RuntimeSettingsPayload>("/api/settings/runtime");
+  return getJson<RuntimeSettingsPayload>(buildApiPath("/api/settings/runtime"));
 }
 
 export function saveRuntimeSettings(payload: RuntimeSettingsPayload) {
   return getJson<{ saved: boolean; config: RuntimeSettingsPayload }>(
-    "/api/settings/runtime",
+    buildApiPath("/api/settings/runtime"),
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -77,13 +84,13 @@ export function saveRuntimeSettings(payload: RuntimeSettingsPayload) {
 }
 
 export function fetchPrompts() {
-  return getJson<PromptSettings>("/api/settings/prompts");
+  return getJson<PromptSettings>(buildApiPath("/api/settings/prompts"));
 }
 
 export function savePrompts(
   payload: Pick<PromptSettings, "folderSuggestion" | "classification">,
 ) {
-  return getJson<PromptSettings>("/api/settings/prompts", {
+  return getJson<PromptSettings>(buildApiPath("/api/settings/prompts"), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -91,17 +98,17 @@ export function savePrompts(
 }
 
 export function resetPrompts() {
-  return getJson<PromptSettings>("/api/settings/prompts/reset", {
+  return getJson<PromptSettings>(buildApiPath("/api/settings/prompts/reset"), {
     method: "POST",
   });
 }
 
 export function fetchCategories() {
-  return getJson<CategoryFolderLibrary>("/api/settings/categories");
+  return getJson<CategoryFolderLibrary>(buildApiPath("/api/settings/categories"));
 }
 
 export function saveCategories(folders: string[]) {
-  return getJson<CategoryFolderLibrary>("/api/settings/categories", {
+  return getJson<CategoryFolderLibrary>(buildApiPath("/api/settings/categories"), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ folders }),
@@ -109,25 +116,29 @@ export function saveCategories(folders: string[]) {
 }
 
 export function syncCategories() {
-  return getJson<CategoryFolderLibrary>("/api/settings/categories/sync", {
+  return getJson<CategoryFolderLibrary>(buildApiPath("/api/settings/categories/sync"), {
     method: "POST",
   });
 }
 
 export function fetchScan() {
-  return getJson<ScanArtifacts>("/api/workflow/scan");
+  return getJson<ScanArtifacts>(buildApiPath("/api/workflow/scan"));
 }
 
 export function fetchFolderSuggestions() {
-  return getJson<FolderSuggestions>("/api/workflow/folders");
+  return getJson<FolderSuggestions>(buildApiPath("/api/workflow/folders"));
 }
 
 export function fetchClassification() {
-  return getJson<ClassificationArtifacts>("/api/workflow/classification");
+  return getJson<ClassificationArtifacts>(buildApiPath("/api/workflow/classification"));
 }
 
 export function fetchMovePlan() {
-  return getJson<MovePlan>("/api/workflow/plan");
+  return getJson<MovePlan>(buildApiPath("/api/workflow/plan"));
+}
+
+export function fetchWorkflowSummary() {
+  return getJson<WorkflowSummaryResponse>(buildApiPath("/api/workflow/summary"));
 }
 
 export function runWorkflowAction(action: WorkflowAction) {
@@ -139,7 +150,7 @@ export function runWorkflowAction(action: WorkflowAction) {
     move: ["/api/workflow/move", { dryRun: false }],
   };
   const [url, payload] = routeMap[action];
-  return getJson<{ jobId: string; dryRun?: boolean }>(url, {
+  return getJson<{ jobId: string; dryRun?: boolean }>(buildApiPath(url), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -147,12 +158,12 @@ export function runWorkflowAction(action: WorkflowAction) {
 }
 
 export function fetchJob(jobId: string) {
-  return getJson<JobRecord>(`/api/jobs/${jobId}`);
+  return getJson<JobRecord>(buildApiPath(`/api/jobs/${jobId}`));
 }
 
 export function cancelJob(jobId: string) {
   return getJson<{ cancelled: boolean; job: JobRecord }>(
-    `/api/jobs/${jobId}/cancel`,
+    buildApiPath(`/api/jobs/${jobId}/cancel`),
     {
       method: "POST",
     },

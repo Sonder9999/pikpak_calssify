@@ -1,77 +1,55 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildWorkflowSteps,
+  buildConsolePages,
+  buildStructuredLogFeed,
+  getLatestStepJob,
   resolveThemePreference,
-  summarizeStepMessage,
-  type ThemePreference,
 } from "../ui/src/lib/dashboard-view-model";
+import { resolveConsoleLocale } from "../ui/src/lib/console-i18n";
 import type {
-  ClassificationArtifacts,
-  FolderSuggestions,
   JobRecord,
-  MovePlan,
-  ScanArtifacts,
+  WorkflowSummaryResponse,
+  WorkflowStepSummary,
 } from "../src/types";
+
+function createStepSummary(
+  id: WorkflowStepSummary["id"],
+  overrides: Partial<WorkflowStepSummary> = {},
+): WorkflowStepSummary {
+  return {
+    id,
+    hasArtifact: false,
+    stale: false,
+    canRun: id === "scan",
+    ...overrides,
+  };
+}
 
 function createJob(overrides: Partial<JobRecord>): JobRecord {
   return {
     id: "job-1",
     type: "scan",
     status: "pending",
-    createdAt: "2026-03-25T00:00:00.000Z",
-    updatedAt: "2026-03-25T00:00:00.000Z",
+    createdAt: "2026-03-26T00:00:00.000Z",
+    updatedAt: "2026-03-26T00:00:00.000Z",
     logs: [],
+    logEntries: [],
     ...overrides,
   };
 }
 
-function createScan(count = 3): ScanArtifacts {
+function createSummary(overrides: Partial<WorkflowSummaryResponse> = {}) {
   return {
-    files: Array.from({ length: count }, (_, index) => ({
-      id: `file-${index}`,
-      path: `/source/file-${index}.mp4`,
-      name: `file-${index}.mp4`,
-      size: 100,
-      mimeType: "video/mp4",
-      durationSeconds: 60,
-      isVideo: true,
-    })),
-    skipped: [],
-    createdAt: "2026-03-25T00:00:00.000Z",
-  };
-}
-
-function createFolders(count = 4): FolderSuggestions {
-  return {
-    folders: Array.from({ length: count }, (_, index) => `分类${index + 1}`),
-    createdAt: "2026-03-25T00:00:00.000Z",
-  };
-}
-
-function createClassification(count = 3): ClassificationArtifacts {
-  return {
-    folders: ["电影", "短视频", "其他"],
-    items: Array.from({ length: count }, (_, index) => ({
-      fileId: `file-${index}`,
-      path: `/source/file-${index}.mp4`,
-      name: `file-${index}.mp4`,
-      folder: index % 2 === 0 ? "电影" : "短视频",
-    })),
-    createdAt: "2026-03-25T00:00:00.000Z",
-  };
-}
-
-function createPlan(totalFiles = 3): MovePlan {
-  return {
-    groups: [
-      {
-        folder: "电影",
-        files: createClassification(totalFiles).items,
-      },
-    ],
-    totalFiles,
-    createdAt: "2026-03-25T00:00:00.000Z",
-  };
+    steps: {
+      scan: createStepSummary("scan"),
+      folders: createStepSummary("folders"),
+      classify: createStepSummary("classify"),
+      "dry-run": createStepSummary("dry-run"),
+      move: createStepSummary("move"),
+    },
+    jobs: [],
+    ...overrides,
+  } satisfies WorkflowSummaryResponse;
 }
 
 describe("resolveThemePreference", () => {
@@ -86,64 +64,149 @@ describe("resolveThemePreference", () => {
   });
 });
 
-describe("buildWorkflowSteps", () => {
-  test("truncates oversized running messages for compact step summaries", () => {
-    const longMessage =
-      "目录建议完成：" +
-      Array.from({ length: 40 }, (_, index) => `超长目录名称${index + 1}`).join("，");
-
-    expect(summarizeStepMessage(longMessage).length).toBeLessThanOrEqual(121);
-    expect(summarizeStepMessage(longMessage)).toEndWith("...");
+describe("resolveConsoleLocale", () => {
+  test("defaults to simplified Chinese when storage is empty or invalid", () => {
+    expect(resolveConsoleLocale(null)).toBe("zh-CN");
+    expect(resolveConsoleLocale("unknown")).toBe("zh-CN");
   });
 
-  test("shows only scan as actionable on first load", () => {
-    const steps = buildWorkflowSteps({});
-
-    expect(steps).toHaveLength(5);
-    expect(steps[0].status).toBe("actionable");
-    expect(steps[1].status).toBe("locked");
-    expect(steps[0].summary).toContain("开始扫描");
+  test("keeps supported locales from storage", () => {
+    expect(resolveConsoleLocale("zh-CN")).toBe("zh-CN");
+    expect(resolveConsoleLocale("en-US")).toBe("en-US");
   });
+});
 
-  test("marks the active classify step as running while keeping previous results complete", () => {
-    const longClassifyLog =
-      "开始分类：" +
-      Array.from({ length: 30 }, (_, index) => `超长任务日志片段${index + 1}`).join("-");
-
-    const steps = buildWorkflowSteps({
-      scan: createScan(12),
-      folderSuggestions: createFolders(6),
-      currentJob: createJob({
-        type: "classify",
-        status: "running",
-        logs: [longClassifyLog],
+describe("console page model", () => {
+  test("maps backend summary into five step pages plus logs in Chinese by default", () => {
+    const pages = buildConsolePages(
+      createSummary({
+        steps: {
+          scan: createStepSummary("scan", { canRun: true }),
+          folders: createStepSummary("folders", {
+            hasArtifact: true,
+            canRun: true,
+          }),
+          classify: createStepSummary("classify", {
+            hasArtifact: true,
+            stale: true,
+            staleReason:
+              "classification inputs changed after the artifact was generated",
+            canRun: true,
+          }),
+          "dry-run": createStepSummary("dry-run", {
+            hasArtifact: true,
+            canRun: true,
+          }),
+          move: createStepSummary("move", { canRun: true }),
+        },
+        jobs: [
+          createJob({
+            id: "job-logs",
+            type: "classify",
+            status: "failed",
+            logEntries: [
+              {
+                level: "error",
+                step: "classify",
+                message: "classification failed",
+                timestamp: "2026-03-26T00:30:00.000Z",
+              },
+            ],
+          }),
+        ],
       }),
+      "zh-CN",
+    );
+
+    expect(pages).toHaveLength(6);
+    expect(pages.map((page) => page.id)).toEqual([
+      "scan",
+      "folders",
+      "classify",
+      "dry-run",
+      "move",
+      "logs",
+    ]);
+    expect(pages[2]).toMatchObject({
+      id: "classify",
+      stale: true,
+      statusLabel: "需更新",
+    });
+    expect(pages[5]).toMatchObject({
+      id: "logs",
+      title: "日志",
+      countLabel: "1 条事件",
+    });
+  });
+
+  test("can render page labels in English when locale toggles", () => {
+    const pages = buildConsolePages(createSummary(), "en-US");
+
+    expect(pages[0]).toMatchObject({
+      id: "scan",
+      title: "Scan",
+      statusLabel: "Available",
+    });
+    expect(pages[5]?.title).toBe("Logs");
+  });
+
+  test("returns the latest job for a specific step", () => {
+    const latestDryRun = createJob({
+      id: "job-dry-run",
+      type: "dry-run",
+      createdAt: "2026-03-26T00:10:00.000Z",
+    });
+    const olderDryRun = createJob({
+      id: "job-dry-run-older",
+      type: "dry-run",
+      createdAt: "2026-03-26T00:05:00.000Z",
     });
 
-    expect(steps[0].status).toBe("completed");
-    expect(steps[1].status).toBe("completed");
-    expect(steps[2].status).toBe("running");
-    expect(steps[2].summary).toContain("开始分类");
-    expect(steps[2].summary.length).toBeLessThanOrEqual(121);
-    expect(steps[3].status).toBe("locked");
+    const job = getLatestStepJob("dry-run", [
+      olderDryRun,
+      createJob({ id: "job-scan", type: "scan" }),
+      latestDryRun,
+    ]);
+
+    expect(job?.id).toBe("job-dry-run");
   });
 
-  test("marks later steps complete when artifacts are present", () => {
-    const steps = buildWorkflowSteps({
-      scan: createScan(5),
-      folderSuggestions: createFolders(3),
-      classification: createClassification(5),
-      movePlan: createPlan(5),
-      currentJob: createJob({
-        type: "move",
+  test("flattens and sorts structured logs newest first", () => {
+    const entries = buildStructuredLogFeed([
+      createJob({
+        id: "job-1",
+        type: "scan",
         status: "completed",
-        logs: ["已移动 5/5"],
+        logEntries: [
+          {
+            level: "info",
+            step: "scan",
+            message: "scan done",
+            timestamp: "2026-03-26T00:01:00.000Z",
+          },
+        ],
       }),
-    });
+      createJob({
+        id: "job-2",
+        type: "classify",
+        status: "failed",
+        logEntries: [
+          {
+            level: "error",
+            step: "classify",
+            message: "classification failed",
+            timestamp: "2026-03-26T00:02:00.000Z",
+          },
+        ],
+      }),
+    ]);
 
-    expect(steps[2].status).toBe("completed");
-    expect(steps[3].status).toBe("completed");
-    expect(steps[4].status).toBe("completed");
-    expect(steps[4].summary).toContain("5 个文件");
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      jobId: "job-2",
+      level: "error",
+      message: "classification failed",
+    });
+    expect(entries[1]?.jobId).toBe("job-1");
   });
 });

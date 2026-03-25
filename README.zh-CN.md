@@ -20,7 +20,7 @@
 
 - `src/`：Elysia 服务端、配置、服务层与工作流逻辑
 - `ui/`：React + Vite + Tailwind 前端源码
-- `public/`：前端构建产物，由 Elysia 直接静态托管
+- `public/`：生产环境前端构建产物，不纳入 git 追踪
 - `tests/`：基于 Bun 的回归与行为测试
 - `data/`：运行时生成的 Prompt 与分类目录数据
 - `output/`：扫描结果、分类结果、移动计划等产物
@@ -62,7 +62,11 @@
 bun run dev
 ```
 
-然后打开 `http://localhost:3000`。
+这条命令会同时启动 Bun API 服务和 Vite 前端开发服务器。
+
+前端页面打开 `http://127.0.0.1:4173`。
+
+后端 API 保持在 `http://127.0.0.1:3000`。
 
 ## 前端构建
 
@@ -73,6 +77,7 @@ bun run build:ui
 ```
 
 构建产物会输出到 `public/`，由 Elysia 服务端直接提供。
+`public/` 下的这些构建文件不纳入 git 追踪。
 
 ## 使用流程
 
@@ -85,7 +90,8 @@ bun run build:ui
 
 ## 常用命令
 
-- `bun run dev`：开发模式启动服务端
+- `bun run dev`：同时启动 Bun API 服务和 Vite 前端开发环境
+- `bun run dev:server`：仅启动 Bun API 服务（watch 模式）
 - `bun run dev:ui`：启动 Vite 前端开发服务器
 - `bun run start`：普通启动
 - `bun run build`：构建前端到 `public/`

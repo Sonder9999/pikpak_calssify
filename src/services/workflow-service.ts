@@ -1,14 +1,20 @@
 ﻿import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
+  CategoryFolderLibrary,
   ClassificationArtifacts,
   ClassificationEntry,
   FileEntry,
   FolderSuggestions,
   MovePlan,
   PromptSettings,
+  RuntimeSettingsPayload,
   ScanArtifacts,
   SkippedFileEntry,
+  WorkflowStepCurrentSignatures,
+  WorkflowStepId,
+  WorkflowSummaryResponse,
+  WorkflowStepSummary,
 } from "../types";
 import {
   chunk,
@@ -44,6 +50,202 @@ export function buildMovePlan(items: ClassificationEntry[]): MovePlan {
   };
 }
 
+function staleReasonForSignature(stepLabel: string) {
+  return `${stepLabel} inputs changed after the artifact was generated`;
+}
+
+function staleReasonForDependency(stepLabel: string) {
+  return `${stepLabel} artifact is older than one of its upstream inputs`;
+}
+
+function stableSignature(value: unknown) {
+  return JSON.stringify(value);
+}
+
+export function createWorkflowStepCurrentSignatures(input: {
+  runtime: RuntimeSettingsPayload;
+  prompts: PromptSettings;
+  categories: CategoryFolderLibrary;
+}): WorkflowStepCurrentSignatures {
+  return {
+    scan: stableSignature({
+      proxyUrl: input.runtime.network.proxyUrl ?? "",
+      username: input.runtime.pikpak.username,
+      password: input.runtime.pikpak.password,
+      sourceFolder: input.runtime.pikpak.sourceFolder,
+      targetFolder: input.runtime.pikpak.targetFolder,
+      deviceId: input.runtime.pikpak.deviceId ?? "",
+      onlyClassifyVideo: input.runtime.workflow.onlyClassifyVideo,
+    }),
+    folders: stableSignature({
+      apiKey: input.runtime.llm.apiKey,
+      baseUrl: input.runtime.llm.baseUrl,
+      model: input.runtime.llm.model,
+      batchSize: input.runtime.workflow.batchSize,
+      folderSuggestionPrompt: input.prompts.folderSuggestion,
+      categoriesUpdatedAt: input.categories.updatedAt,
+    }),
+    classify: stableSignature({
+      apiKey: input.runtime.llm.apiKey,
+      baseUrl: input.runtime.llm.baseUrl,
+      model: input.runtime.llm.model,
+      batchSize: input.runtime.workflow.batchSize,
+      classificationPrompt: input.prompts.classification,
+      categoriesUpdatedAt: input.categories.updatedAt,
+      enableShortVideoFilter: input.runtime.workflow.enableShortVideoFilter,
+      shortVideoThresholdSeconds:
+        input.runtime.workflow.shortVideoThresholdSeconds,
+    }),
+    move: stableSignature({
+      proxyUrl: input.runtime.network.proxyUrl ?? "",
+      username: input.runtime.pikpak.username,
+      password: input.runtime.pikpak.password,
+      targetFolder: input.runtime.pikpak.targetFolder,
+      moveBatchSize: input.runtime.workflow.moveBatchSize,
+      moveMinDelayMs: input.runtime.workflow.moveMinDelayMs,
+      moveMaxDelayMs: input.runtime.workflow.moveMaxDelayMs,
+    }),
+  };
+}
+
+export function buildWorkflowStepSummaries(input: {
+  signatures: WorkflowStepCurrentSignatures;
+  scan?: ScanArtifacts | null;
+  folderSuggestions?: FolderSuggestions | null;
+  classification?: ClassificationArtifacts | null;
+  movePlan?: MovePlan | null;
+}): Record<WorkflowStepId, WorkflowStepSummary> {
+  const scan = input.scan ?? null;
+  const folders = input.folderSuggestions ?? null;
+  const classification = input.classification ?? null;
+  const movePlan = input.movePlan ?? null;
+
+  const scanSummary: WorkflowStepSummary = {
+    id: "scan",
+    hasArtifact: Boolean(scan),
+    artifactUpdatedAt: scan?.createdAt,
+    stale:
+      Boolean(scan) &&
+      scan?.meta?.signature !== undefined &&
+      scan.meta.signature !== input.signatures.scan,
+    staleReason:
+      scan?.meta?.signature !== undefined &&
+      scan.meta.signature !== input.signatures.scan
+        ? staleReasonForSignature("scan")
+        : undefined,
+    canRun: true,
+  };
+
+  const foldersDependencyChanged =
+    Boolean(folders && scan) &&
+    folders?.meta?.sourceScanCreatedAt !== undefined &&
+    folders.meta.sourceScanCreatedAt !== scan.createdAt;
+  const foldersSignatureChanged =
+    Boolean(folders) &&
+    folders?.meta?.signature !== undefined &&
+    folders.meta.signature !== input.signatures.folders;
+  const foldersStale =
+    Boolean(folders) &&
+    (Boolean(scanSummary.stale) ||
+      foldersDependencyChanged ||
+      foldersSignatureChanged);
+  const foldersSummary: WorkflowStepSummary = {
+    id: "folders",
+    hasArtifact: Boolean(folders),
+    artifactUpdatedAt: folders?.createdAt,
+    stale: foldersStale,
+    staleReason: !folders
+      ? undefined
+      : foldersSignatureChanged
+        ? staleReasonForSignature("folder suggestion")
+        : scanSummary.stale || foldersDependencyChanged
+          ? staleReasonForDependency("folder suggestion")
+          : undefined,
+    canRun: Boolean(scan),
+  };
+
+  const classificationDependsOnScanChanged =
+    Boolean(classification && scan) &&
+    classification?.meta?.sourceScanCreatedAt !== undefined &&
+    classification.meta.sourceScanCreatedAt !== scan.createdAt;
+  const classificationDependsOnFoldersChanged =
+    Boolean(classification && folders) &&
+    classification?.meta?.sourceFoldersCreatedAt !== undefined &&
+    classification.meta.sourceFoldersCreatedAt !== folders.createdAt;
+  const classificationSignatureChanged =
+    Boolean(classification) &&
+    classification?.meta?.signature !== undefined &&
+    classification.meta.signature !== input.signatures.classify;
+  const classificationStale =
+    Boolean(classification) &&
+    (Boolean(scanSummary.stale) ||
+      Boolean(foldersSummary.stale) ||
+      classificationDependsOnScanChanged ||
+      classificationDependsOnFoldersChanged ||
+      classificationSignatureChanged);
+  const classificationSummary: WorkflowStepSummary = {
+    id: "classify",
+    hasArtifact: Boolean(classification),
+    artifactUpdatedAt: classification?.createdAt,
+    stale: classificationStale,
+    staleReason: !classification
+      ? undefined
+      : classificationSignatureChanged
+        ? staleReasonForSignature("classification")
+        : scanSummary.stale ||
+            foldersSummary.stale ||
+            classificationDependsOnScanChanged ||
+            classificationDependsOnFoldersChanged
+          ? staleReasonForDependency("classification")
+          : undefined,
+    canRun: Boolean(scan),
+  };
+
+  const moveDependsOnClassificationChanged =
+    Boolean(movePlan && classification) &&
+    movePlan?.meta?.sourceClassificationCreatedAt !== undefined &&
+    movePlan.meta.sourceClassificationCreatedAt !== classification.createdAt;
+  const moveSignatureChanged =
+    Boolean(movePlan) &&
+    movePlan?.meta?.signature !== undefined &&
+    movePlan.meta.signature !== input.signatures.move;
+  const moveStale =
+    Boolean(movePlan) &&
+    (Boolean(classificationSummary.stale) ||
+      moveDependsOnClassificationChanged ||
+      moveSignatureChanged);
+  const dryRunSummary: WorkflowStepSummary = {
+    id: "dry-run",
+    hasArtifact: Boolean(movePlan),
+    artifactUpdatedAt: movePlan?.createdAt,
+    stale: moveStale,
+    staleReason: !movePlan
+      ? undefined
+      : moveSignatureChanged
+        ? staleReasonForSignature("move settings")
+        : classificationSummary.stale || moveDependsOnClassificationChanged
+          ? staleReasonForDependency("move preview")
+          : undefined,
+    canRun: Boolean(classification),
+  };
+  const moveSummary: WorkflowStepSummary = {
+    id: "move",
+    hasArtifact: Boolean(movePlan),
+    artifactUpdatedAt: movePlan?.createdAt,
+    stale: moveStale,
+    staleReason: dryRunSummary.staleReason,
+    canRun: Boolean(classification),
+  };
+
+  return {
+    scan: scanSummary,
+    folders: foldersSummary,
+    classify: classificationSummary,
+    "dry-run": dryRunSummary,
+    move: moveSummary,
+  };
+}
+
 export class WorkflowService {
   constructor(
     private readonly settings: SettingsService,
@@ -57,6 +259,42 @@ export class WorkflowService {
 
   private async getPrompts(): Promise<PromptSettings> {
     return this.settings.getPrompts();
+  }
+
+  private async getCurrentSignatures() {
+    const [runtime, prompts, categories] = await Promise.all([
+      this.settings.getEditableRuntimeConfig(),
+      this.settings.getPrompts(),
+      this.settings.getCategoryFolders(),
+    ]);
+
+    return createWorkflowStepCurrentSignatures({
+      runtime,
+      prompts,
+      categories,
+    });
+  }
+
+  async getWorkflowSummary(): Promise<WorkflowSummaryResponse> {
+    const [signatures, scan, folderSuggestions, classification, movePlan] =
+      await Promise.all([
+        this.getCurrentSignatures(),
+        this.getLatestScan(),
+        this.getLatestFolders(),
+        this.getLatestClassification(),
+        this.getLatestMovePlan(),
+      ]);
+
+    return {
+      steps: buildWorkflowStepSummaries({
+        signatures,
+        scan,
+        folderSuggestions,
+        classification,
+        movePlan,
+      }),
+      jobs: this.jobs.listJobs(),
+    };
   }
 
   async getLatestScan() {
@@ -93,6 +331,7 @@ export class WorkflowService {
 
   async scan(jobId: string) {
     const config = await this.settings.loadRuntimeConfig();
+    const signatures = await this.getCurrentSignatures();
     const signal = this.jobs.getSignal(jobId);
     const client = new PikPakClient(config, signal);
     throwIfAborted(signal);
@@ -120,7 +359,14 @@ export class WorkflowService {
       files.push(file);
     }
 
-    const payload: ScanArtifacts = { files, skipped, createdAt: nowIso() };
+    const payload: ScanArtifacts = {
+      files,
+      skipped,
+      createdAt: nowIso(),
+      meta: {
+        signature: signatures.scan,
+      },
+    };
     await writeJsonFile(await this.outputFile("scan-result.json"), payload);
     await writeFile(
       await this.outputFile("file_list.txt"),
@@ -163,6 +409,7 @@ export class WorkflowService {
 
   async suggestFolders(jobId: string) {
     const config = await this.settings.loadRuntimeConfig();
+    const signatures = await this.getCurrentSignatures();
     const signal = this.jobs.getSignal(jobId);
     const llm = new LlmService(config);
     const prompts = await this.getPrompts();
@@ -195,6 +442,10 @@ export class WorkflowService {
     const payload: FolderSuggestions = {
       folders: mergedLibrary.folders,
       createdAt: nowIso(),
+      meta: {
+        signature: signatures.folders,
+        sourceScanCreatedAt: scan.createdAt,
+      },
     };
     await writeJsonFile(
       await this.outputFile("folder-suggestions.json"),
@@ -214,6 +465,7 @@ export class WorkflowService {
 
   async classify(jobId: string) {
     const config = await this.settings.loadRuntimeConfig();
+    const signatures = await this.getCurrentSignatures();
     const signal = this.jobs.getSignal(jobId);
     const llm = new LlmService(config);
     const prompts = await this.getPrompts();
@@ -289,6 +541,11 @@ export class WorkflowService {
       folders: mergedFolders,
       items,
       createdAt: nowIso(),
+      meta: {
+        signature: signatures.classify,
+        sourceScanCreatedAt: scan.createdAt,
+        sourceFoldersCreatedAt: folderArtifacts?.createdAt,
+      },
     };
     await writeJsonFile(
       await this.outputFile("classification-result.json"),
@@ -304,6 +561,10 @@ export class WorkflowService {
     );
 
     const plan = buildMovePlan(items);
+    plan.meta = {
+      signature: signatures.move,
+      sourceClassificationCreatedAt: payload.createdAt,
+    };
     await writeJsonFile(await this.outputFile("move-plan.json"), plan);
     await this.settings.saveCategoryFolders(mergedFolders);
 
@@ -318,6 +579,7 @@ export class WorkflowService {
 
   async move(jobId: string, dryRun: boolean) {
     const config = await this.settings.loadRuntimeConfig();
+    const signatures = await this.getCurrentSignatures();
     const signal = this.jobs.getSignal(jobId);
     const classification = await this.getLatestClassification();
     if (!classification) throw new Error("请先执行分类");
@@ -325,6 +587,10 @@ export class WorkflowService {
     this.jobs.setStatus(jobId, "running");
 
     const plan = buildMovePlan(classification.items);
+    plan.meta = {
+      signature: signatures.move,
+      sourceClassificationCreatedAt: classification.createdAt,
+    };
     await writeJsonFile(await this.outputFile("move-plan.json"), plan);
     throwIfAborted(signal);
 

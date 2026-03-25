@@ -13,7 +13,12 @@ import { isAbortError, jsonResponse } from "./utils";
 import { JobManager } from "./services/job-manager";
 import { SettingsService } from "./services/settings-service";
 import { WorkflowService } from "./services/workflow-service";
-import type { PromptSettings, RuntimeSettingsPayload } from "./types";
+import { resolveFrontendMode } from "./dev-runtime";
+import type {
+  PromptSettings,
+  RuntimeSettingsPayload,
+  WorkflowSummaryResponse,
+} from "./types";
 
 const startupConfig = loadConfig();
 await ensureOutputDir(startupConfig);
@@ -22,6 +27,7 @@ const jobs = new JobManager();
 const settings = new SettingsService();
 await settings.ensureDataFiles();
 const workflow = new WorkflowService(settings, jobs);
+const frontendMode = resolveFrontendMode(process.env);
 
 function createJobRunner(
   type: string,
@@ -52,17 +58,24 @@ function createJobRunner(
   return job;
 }
 
-const app = new Elysia()
-  .use(cors())
-  .use(staticPlugin({ assets: join(process.cwd(), "public"), prefix: "/" }))
-  .get(
-    "/",
-    async () =>
-      new Response(
-        await readFile(join(process.cwd(), "public/index.html"), "utf8"),
-        { headers: { "content-type": "text/html; charset=utf-8" } },
-      ),
-  )
+const app = new Elysia().use(cors());
+
+if (frontendMode.type === "static") {
+  app
+    .use(staticPlugin({ assets: join(process.cwd(), "public"), prefix: "/" }))
+    .get(
+      "/",
+      async () =>
+        new Response(
+          await readFile(join(process.cwd(), "public/index.html"), "utf8"),
+          { headers: { "content-type": "text/html; charset=utf-8" } },
+        ),
+    );
+} else {
+  app.get("/", () => Response.redirect(frontendMode.location, 302));
+}
+
+app
   .get("/api/health", async () => {
     const config = await settings.loadRuntimeConfig();
     return {
@@ -112,6 +125,11 @@ const app = new Elysia()
       (await workflow.getLatestMovePlan()) ?? { groups: [], totalFiles: 0 },
     ),
   )
+  .get("/api/workflow/summary", async () =>
+    jsonResponse(
+      (await workflow.getWorkflowSummary()) as WorkflowSummaryResponse,
+    ),
+  )
   .get("/api/workflow/scan", async () =>
     jsonResponse(
       (await workflow.getLatestScan()) ?? { files: [], skipped: [] },
@@ -150,7 +168,8 @@ const app = new Elysia()
   )
   .post("/api/workflow/move", async ({ body }) => {
     const payload = (body ?? {}) as { dryRun?: boolean };
-    const job = createJobRunner("move", (jobId) =>
+    const jobType = payload.dryRun !== false ? "dry-run" : "move";
+    const job = createJobRunner(jobType, (jobId) =>
       workflow.move(jobId, payload.dryRun !== false),
     );
     return jsonResponse(

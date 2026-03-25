@@ -19,3 +19,7 @@ tmp_server*.log
 tmp_server*.err.log
 data/
 .superpowers/
+docx/ui-modernization-guide.md
+docs/
+/public/index.html
+/public/assets/
